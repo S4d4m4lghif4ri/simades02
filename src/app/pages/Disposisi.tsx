@@ -1,9 +1,18 @@
-import { useState } from "react";
-import { disposisi as initialDisposisi, suratMasuk } from "../data/mockData";
+import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
+import { supabase } from "../../lib/supabase";
 import { Plus, Eye, GitBranch, X, ArrowRight, CheckCircle, Clock } from "lucide-react";
+import { toast } from "sonner";
 
-type Disposisi = typeof initialDisposisi[0];
+type Disposisi = {
+  disposisi_id: string;
+  surat_masuk_id: string;
+  dari: string;
+  kepada: string;
+  instruksi: string;
+  tanggal: string;
+  status: string;
+};
 
 const statusColor: Record<string, string> = {
   diproses: "bg-amber-100 text-amber-700 border-amber-200",
@@ -20,7 +29,21 @@ const staffOptions = [
 
 export default function Disposisi() {
   const { user } = useAuth();
-  const [data, setData] = useState(initialDisposisi);
+  const [data, setData] = useState<Disposisi[]>([]);
+  const [smList, setSmList] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchDisposisi();
+  }, []);
+
+  const fetchDisposisi = async () => {
+    const [dRes, sRes] = await Promise.all([
+       supabase.from('disposisi').select('*').order('tanggal', {ascending: false}),
+       supabase.from('surat_masuk').select('*')
+    ]);
+    if(dRes.data) setData(dRes.data);
+    if(sRes.data) setSmList(sRes.data);
+  };
   const [showModal, setShowModal] = useState(false);
   const [showDetail, setShowDetail] = useState<Disposisi | null>(null);
   const [form, setForm] = useState({
@@ -32,11 +55,11 @@ export default function Disposisi() {
 
   const canCreate = user?.role === "KEPALA_DESA" || user?.role === "SEKDES";
 
-  const getSuratInfo = (id: string) => suratMasuk.find(s => s.surat_masuk_id === id);
+  const getSuratInfo = (id: string) => smList.find(s => s.surat_masuk_id === id);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.surat_masuk_id || !form.kepada || !form.instruksi) return;
-    const newId = `D${String(data.length + 1).padStart(3, "0")}`;
+    const newId = `D${String(Date.now()).slice(-6)}`;
     const newDisposisi: Disposisi = {
       disposisi_id: newId,
       surat_masuk_id: form.surat_masuk_id,
@@ -46,13 +69,24 @@ export default function Disposisi() {
       tanggal: form.tanggal,
       status: "diproses",
     };
+    
+    const { error } = await supabase.from('disposisi').insert([newDisposisi]);
+    if (error) { toast.error("Gagal: " + error.message); return; }
+    
     setData(prev => [newDisposisi, ...prev]);
     setShowModal(false);
     setForm({ surat_masuk_id: "", kepada: "", instruksi: "", tanggal: new Date().toISOString().split("T")[0] });
+    toast.success("Disposisi dibuat");
   };
 
-  const handleComplete = (id: string) => {
-    setData(prev => prev.map(d => d.disposisi_id === id ? { ...d, status: "selesai" } : d));
+  const handleComplete = async (id: string) => {
+    const { error } = await supabase.from('disposisi').update({status:'selesai'}).eq('disposisi_id', id);
+    if (!error) {
+      setData(prev => prev.map(d => d.disposisi_id === id ? { ...d, status: "selesai" } : d));
+      toast.success("Disposisi selesai");
+    } else {
+      toast.error("Error: " + error.message);
+    }
     setShowDetail(null);
   };
 
@@ -159,7 +193,7 @@ export default function Disposisi() {
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                 >
                   <option value="">Pilih surat masuk...</option>
-                  {suratMasuk.filter(s => s.status !== "selesai").map(s => (
+                  {smList.filter(s => s.status !== "selesai").map(s => (
                     <option key={s.surat_masuk_id} value={s.surat_masuk_id}>
                       {s.surat_masuk_id} - {s.perihal}
                     </option>

@@ -1,29 +1,57 @@
+import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { suratKeluar, suratMasuk, tugas, kegiatan, keuangan, monthlyLetterStats, taskCompletionStats, financialStats } from "../data/mockData";
+import { supabase } from "../../lib/supabase";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, AreaChart, Area, ResponsiveContainer } from "recharts";
-import { Mail, MailOpen, CheckCircle, Clock, Wallet, Calendar, TrendingUp, TrendingDown, AlertCircle } from "lucide-react";
+import { Mail, MailOpen, CheckCircle, Clock, Wallet, Calendar, TrendingUp, TrendingDown, AlertCircle, Loader2 } from "lucide-react";
 
 const formatRupiah = (v: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", notation: "compact", maximumFractionDigits: 1 }).format(v);
 
 export default function Dashboard() {
   const { user } = useAuth();
 
+  const [suratKeluar, setSuratKeluar] = useState<any[]>([]);
+  const [suratMasuk, setSuratMasuk] = useState<any[]>([]);
+  const [tugas, setTugas] = useState<any[]>([]);
+  const [kegiatan, setKegiatan] = useState<any[]>([]);
+  const [keuangan, setKeuangan] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true);
+      const [sk, sm, tg, kg, ku] = await Promise.all([
+        supabase.from('surat_keluar').select('*'),
+        supabase.from('surat_masuk').select('*').order('tanggal_surat', { ascending: false }),
+        supabase.from('tugas').select('*').order('tanggal_mulai', { ascending: false }),
+        supabase.from('kegiatan').select('*'),
+        supabase.from('keuangan').select('*')
+      ]);
+      setSuratKeluar(sk.data || []);
+      setSuratMasuk(sm.data || []);
+      setTugas(tg.data || []);
+      setKegiatan(kg.data || []);
+      setKeuangan(ku.data || []);
+      setLoading(false);
+    }
+    fetchData();
+  }, []);
+
   const pendingSurat = suratKeluar.filter(s => s.status === "pending").length;
   const approvedSurat = suratKeluar.filter(s => s.status === "approved").length;
   const activeTasks = tugas.filter(t => t.status === "proses").length;
-  const todayActivities = kegiatan.filter(k => k.tanggal === "2026-03-13").length;
-  const totalMasuk = keuangan.filter(k => k.jenis === "masuk").reduce((a, b) => a + b.jumlah, 0);
-  const totalKeluar = keuangan.filter(k => k.jenis === "keluar").reduce((a, b) => a + b.jumlah, 0);
+  const todayActivities = kegiatan.filter(k => k.tanggal === new Date().toISOString().split("T")[0]).length;
+  const totalMasuk = keuangan.filter(k => k.jenis === "masuk").reduce((a, b) => a + Number(b.jumlah), 0);
+  const totalKeluar = keuangan.filter(k => k.jenis === "keluar").reduce((a, b) => a + Number(b.jumlah), 0);
   const saldo = totalMasuk - totalKeluar;
 
   const recentSurat = suratMasuk.slice(0, 4);
   const recentTasks = tugas.slice(0, 4);
 
   const statsCards = [
-    { label: "Surat Pending", value: pendingSurat, icon: Clock, color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100", trend: "+2 minggu ini" },
-    { label: "Surat Disetujui", value: approvedSurat, icon: CheckCircle, color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", trend: "+5 bulan ini" },
-    { label: "Tugas Aktif", value: activeTasks, icon: AlertCircle, color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", trend: "dari " + tugas.length + " total" },
-    { label: "Kegiatan Hari Ini", value: todayActivities, icon: Calendar, color: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100", trend: "Jadwal hari ini" },
+    { label: "Surat Pending", value: pendingSurat, icon: Clock, color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100", trend: "Menunggu" },
+    { label: "Surat Disetujui", value: approvedSurat, icon: CheckCircle, color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", trend: "Berhasil" },
+    { label: "Tugas Aktif", value: activeTasks, icon: AlertCircle, color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", trend: `dari ${tugas.length} total` },
+    { label: "Kegiatan Hari Ini", value: todayActivities, icon: Calendar, color: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100", trend: "Jadwal" },
   ];
 
   const statusColor: Record<string, string> = {
@@ -53,17 +81,24 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
-          <h1 className="text-gray-900">Selamat Datang, {user?.nama?.split(" ")[0]}!</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Sabtu, 14 Maret 2026 • Desa Cibiru Hilir</p>
+          <h1 className="text-gray-900">Selamat Datang, {user?.nama?.split(" ")[0] || "User"}!</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Sistem Manajemen Desa Cibiru Hilir</p>
         </div>
         <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-2">
           <Wallet className="w-4 h-4 text-emerald-600" />
           <div>
             <p className="text-xs text-emerald-600">Saldo Kas Desa</p>
-            <p className="text-emerald-700 text-sm">{formatRupiah(saldo)}</p>
+            <p className="text-emerald-700 text-sm font-bold">{loading ? "..." : formatRupiah(saldo)}</p>
           </div>
         </div>
       </div>
+
+      {loading && (
+        <div className="flex items-center justify-center p-12 text-emerald-600 gap-3">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span>Memuat data dari Supabase...</span>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -82,101 +117,30 @@ export default function Dashboard() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid lg:grid-cols-3 gap-4">
-        {/* Letter Statistics */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-gray-800">Statistik Surat</h3>
-            <span className="text-xs text-gray-400">6 Bulan Terakhir</span>
-          </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={monthlyLetterStats} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid key="db-bar-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis key="db-bar-xaxis" dataKey="bulan" tick={{ fontSize: 12 }} />
-              <YAxis key="db-bar-yaxis" tick={{ fontSize: 12 }} />
-              <Tooltip key="db-bar-tooltip" />
-              <Legend key="db-bar-legend" wrapperStyle={{ fontSize: "12px" }} />
-              <Bar key="db-bar-keluar" dataKey="keluar" name="Surat Keluar" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Bar key="db-bar-masuk" dataKey="masuk" name="Surat Masuk" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
+      {!loading && (<div className="grid lg:grid-cols-3 gap-4">
         {/* Task Completion */}
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm lg:col-span-3">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-gray-800">Status Tugas</h3>
+            <h3 className="text-gray-800">Status Tugas & Kegiatan (Bulan Ini)</h3>
           </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie
-                key="db-pie"
-                data={taskCompletionStats}
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={80}
-                paddingAngle={4}
-                dataKey="value"
-              >
-                {taskCompletionStats.map((entry) => (
-                  <Cell key={`db-cell-${entry.name}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip key="db-pie-tooltip" />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-2 mt-2">
-            {taskCompletionStats.map(item => (
-              <div key={item.name} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
-                  <span className="text-gray-600">{item.name}</span>
-                </div>
-                <span className="text-gray-800">{item.value}</span>
-              </div>
-            ))}
+          <div className="flex gap-4">
+            <div className="flex-1 bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-center">
+               <div className="text-emerald-700 font-bold text-2xl">{tugas.filter(t=>t.status==='selesai').length}</div>
+               <div className="text-emerald-600 text-xs mt-1">Tugas Selesai</div>
+            </div>
+            <div className="flex-1 bg-blue-50 border border-blue-100 rounded-lg p-3 text-center">
+               <div className="text-blue-700 font-bold text-2xl">{tugas.filter(t=>t.status==='proses').length}</div>
+               <div className="text-blue-600 text-xs mt-1">Sedang Proses</div>
+            </div>
+            <div className="flex-1 bg-amber-50 border border-amber-100 rounded-lg p-3 text-center">
+               <div className="text-amber-700 font-bold text-2xl">{tugas.filter(t=>t.status==='belum_mulai').length}</div>
+               <div className="text-amber-600 text-xs mt-1">Belum Dimulai</div>
+            </div>
           </div>
         </div>
-      </div>
+      </div>)}
 
-      {/* Financial Chart */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-          <h3 className="text-gray-800">Keuangan Desa 2026</h3>
-          <div className="flex items-center gap-4 text-sm">
-            <div className="flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-emerald-500" />
-              <span className="text-gray-600">Pemasukan: <span className="text-emerald-600">{formatRupiah(totalMasuk)}</span></span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <TrendingDown className="w-4 h-4 text-red-500" />
-              <span className="text-gray-600">Pengeluaran: <span className="text-red-600">{formatRupiah(totalKeluar)}</span></span>
-            </div>
-          </div>
-        </div>
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={financialStats} margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
-            <defs>
-              <linearGradient id="db-masukGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="db-keluarGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid key="db-area-grid" strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis key="db-area-xaxis" dataKey="bulan" tick={{ fontSize: 12 }} />
-            <YAxis key="db-area-yaxis" tick={{ fontSize: 11 }} tickFormatter={v => v > 0 ? formatRupiah(v) : "0"} width={70} />
-            <Tooltip key="db-area-tooltip" formatter={(v: number) => formatRupiah(v)} />
-            <Legend key="db-area-legend" wrapperStyle={{ fontSize: "12px" }} />
-            <Area key="db-area-masuk" type="monotone" dataKey="masuk" name="Pemasukan" stroke="#10b981" fill="url(#db-masukGrad)" strokeWidth={2} />
-            <Area key="db-area-keluar" type="monotone" dataKey="keluar" name="Pengeluaran" stroke="#ef4444" fill="url(#db-keluarGrad)" strokeWidth={2} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+
 
       {/* Recent Data */}
       <div className="grid lg:grid-cols-2 gap-4">

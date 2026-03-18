@@ -1,10 +1,19 @@
-import { useState } from "react";
-import { suratMasuk as initialData } from "../data/mockData";
+import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Plus, Search, Filter, Eye, MailOpen, FileText, X, Archive, Download, UploadCloud } from "lucide-react";
+import { supabase } from "../../lib/supabase";
+import { Plus, Search, Filter, Eye, MailOpen, FileText, X, Archive, Download, UploadCloud, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-type Surat = typeof initialData[0] & { fileUrl?: string };
+type Surat = {
+  surat_masuk_id: string;
+  nomor_surat: string;
+  asal_surat: string;
+  tanggal_surat: string;
+  perihal: string;
+  file_surat: string;
+  status: string;
+  fileUrl?: string;
+};
 
 const statusColor: Record<string, string> = {
   baru: "bg-blue-100 text-blue-700 border-blue-200",
@@ -19,7 +28,8 @@ const statusLabel: Record<string, string> = {
 
 export default function SuratMasuk() {
   const { user } = useAuth();
-  const [data, setData] = useState<Surat[]>(initialData);
+  const [data, setData] = useState<Surat[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [showModal, setShowModal] = useState(false);
@@ -32,6 +42,25 @@ export default function SuratMasuk() {
     tanggal_surat: new Date().toISOString().split("T")[0],
     perihal: "",
   });
+
+  useEffect(() => {
+    fetchSurat();
+  }, []);
+
+  const fetchSurat = async () => {
+    setLoading(true);
+    const { data: dbData, error } = await supabase
+      .from("surat_masuk")
+      .select("*")
+      .order("tanggal_surat", { ascending: false });
+
+    if (error) {
+      toast.error("Gagal mengambil data surat masuk: " + error.message);
+    } else if (dbData) {
+      setData(dbData);
+    }
+    setLoading(false);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -74,12 +103,9 @@ export default function SuratMasuk() {
     }
     
     setUploading(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const newId = `SM${String(Date.now()).slice(-6)}`;
     
-    const newId = `SM${String(data.length + 1).padStart(3, "0")}`;
-    const fileUrl = URL.createObjectURL(selectedFile);
-    
-    const newSurat: Surat = {
+    const newSurat: Omit<Surat, 'fileUrl'> = {
       surat_masuk_id: newId,
       nomor_surat: form.nomor_surat,
       asal_surat: form.asal_surat,
@@ -87,24 +113,42 @@ export default function SuratMasuk() {
       perihal: form.perihal,
       file_surat: selectedFile.name,
       status: "baru",
-      fileUrl: fileUrl,
     };
     
-    setData(prev => [newSurat, ...prev]);
+    const { error } = await supabase.from("surat_masuk").insert([newSurat]);
+    
     setUploading(false);
+    
+    if (error) {
+      toast.error("Gagal meregistrasi surat: " + error.message);
+      return;
+    }
+
+    const fileUrl = URL.createObjectURL(selectedFile);
+    setData(prev => [{ ...newSurat, fileUrl } as Surat, ...prev]);
     setShowModal(false);
     setSelectedFile(null);
     setForm({ nomor_surat: "", asal_surat: "", tanggal_surat: new Date().toISOString().split("T")[0], perihal: "" });
     toast.success("Surat masuk berhasil diregistrasi");
   };
 
-  const handleProcess = (id: string) => {
+  const handleProcess = async (id: string) => {
+    const { error } = await supabase.from("surat_masuk").update({ status: "diproses" }).eq("surat_masuk_id", id);
+    if (error) {
+       toast.error("Gagal update status: " + error.message);
+       return;
+    }
     setData(prev => prev.map(s => s.surat_masuk_id === id ? { ...s, status: "diproses" } : s));
     toast.info("Status surat diubah menjadi Diproses");
     setShowDetail(null);
   };
 
-  const handleComplete = (id: string) => {
+  const handleComplete = async (id: string) => {
+    const { error } = await supabase.from("surat_masuk").update({ status: "selesai" }).eq("surat_masuk_id", id);
+    if (error) {
+       toast.error("Gagal update status: " + error.message);
+       return;
+    }
     setData(prev => prev.map(s => s.surat_masuk_id === id ? { ...s, status: "selesai" } : s));
     toast.success("Surat telah diarsipkan");
     setShowDetail(null);
@@ -186,7 +230,22 @@ export default function SuratMasuk() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map(surat => (
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="text-center py-12 text-gray-400">
+                    <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-blue-500" />
+                    <p className="text-sm">Memuat data dari Supabase...</p>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="text-center py-12 text-gray-400">
+                    <MailOpen className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Tidak ada data surat masuk</p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map(surat => (
                 <tr key={surat.surat_masuk_id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -222,15 +281,7 @@ export default function SuratMasuk() {
                     </div>
                   </td>
                 </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="text-center py-12 text-gray-400">
-                    <MailOpen className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Tidak ada data surat masuk</p>
-                  </td>
-                </tr>
-              )}
+              )))}
             </tbody>
           </table>
         </div>

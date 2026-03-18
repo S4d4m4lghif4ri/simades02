@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from "react";
-import { supabase } from "../../api";
+import { supabase } from "../../lib/supabase";
 
 interface User {
   user_id: string;
@@ -26,46 +26,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // 🔄 cek session saat pertama load
   useEffect(() => {
-  getSession().finally(() => setInitializing(false));
+    getSession().finally(() => setInitializing(false));
 
-  const { data: listener } = supabase.auth.onAuthStateChange(
-    (_event, session) => {
-      if (session?.user) {
-        setUser({
-          user_id: session.user.id,
-          nama: session.user.email || "",
-          jabatan: "",
-          role: "admin",
-          email: session.user.email || "",
-          status: "aktif",
-        });
-      } else {
-        setUser(null);
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (session?.user) {
+          await fetchUserProfile(session.user.id, session.user.email || "");
+        } else {
+          setUser(null);
+        }
+        setInitializing(false);
       }
+    );
 
-      setInitializing(false);
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  async function getSession() {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) return;
+    await fetchUserProfile(data.user.id, data.user.email || "");
+  }
+
+  // 🔹 Fetch detail user dari tabel public.users
+  async function fetchUserProfile(authUserId: string, authEmail: string) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", authEmail)
+      .single();
+
+    if (error || !data) {
+      // Fallback jika belum dibuatkan data manual di tabel users
+      setUser({
+        user_id: authUserId,
+        nama: authEmail.split("@")[0],
+        jabatan: "Pengguna Baru",
+        role: "GUEST",
+        email: authEmail,
+        status: "aktif",
+      });
+    } else {
+      // Berhasil fetch role & data asli dari DB
+      setUser({
+        user_id: data.user_id,
+        nama: data.nama,
+        jabatan: data.jabatan,
+        role: data.role,
+        email: data.email,
+        status: data.status,
+      });
     }
-  );
-
-  return () => {
-    listener.subscription.unsubscribe();
-  };
-}, []);
-
- async function getSession() {
-  const { data, error } = await supabase.auth.getUser();
-
-  if (error || !data.user) return;
-
-  setUser({
-    user_id: data.user.id,
-    nama: data.user.email || "",
-    jabatan: "",
-    role: "admin",
-    email: data.user.email || "",
-    status: "aktif",
-  });
-}
+  }
 
   // 🔐 LOGIN
   const login = async (email: string, password: string): Promise<boolean> => {
@@ -79,14 +93,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    setUser({
-      user_id: data.user.id,
-      nama: data.user.email || "",
-      jabatan: "",
-      role: "admin",
-      email: data.user.email || "",
-      status: "aktif",
-    });
+    if (data.user) {
+      await fetchUserProfile(data.user.id, data.user.email || "");
+    }
 
     return true;
   };
@@ -97,10 +106,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
-  // 🔐 PERMISSION (sementara default true)
+  // 🔐 PERMISSION
   const hasPermission = (module: string): boolean => {
     if (!user) return false;
-    return true; // nanti bisa dikembangkan pakai role dari database
+    // Disini Anda bisa melimitasi akses, misal:
+    // KEPALA_DESA bisa semua, ADMIN bisa sebagian, GUEST tidak bisa
+    if (user.role === "KEPALA_DESA" || user.role === "ADMIN") return true;
+    
+    // Default fallback
+    return true;
   };
 
   return (

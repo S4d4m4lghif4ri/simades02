@@ -1,13 +1,24 @@
-import { useState } from "react";
-import { suratKeluar as initialData } from "../data/mockData";
+import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
+import { supabase } from "../../lib/supabase";
 import {
   Plus, Search, Filter, Eye, CheckCircle, XCircle, Clock,
-  FileText, Download, Stamp, ChevronDown, X, UploadCloud
+  FileText, Download, Stamp, ChevronDown, X, UploadCloud, Loader2
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Surat = typeof initialData[0] & { fileUrl?: string };
+type Surat = {
+  surat_id: string;
+  nomor_surat: string;
+  jenis_surat: string;
+  tanggal: string;
+  pembuat: string;
+  file_draft: string;
+  status: string;
+  ttd_kades: boolean;
+  tanggal_approve: string | null;
+  fileUrl?: string;
+};
 
 const statusColor: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700 border-amber-200",
@@ -32,7 +43,8 @@ const jenisSuratOptions = [
 
 export default function SuratKeluar() {
   const { user } = useAuth();
-  const [data, setData] = useState<Surat[]>(initialData);
+  const [data, setData] = useState<Surat[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [showModal, setShowModal] = useState(false);
@@ -43,6 +55,26 @@ export default function SuratKeluar() {
     jenis_surat: "",
     tanggal: new Date().toISOString().split("T")[0],
   });
+
+  // Fetch data dari Supabase saat pertama kali load
+  useEffect(() => {
+    fetchSurat();
+  }, []);
+
+  const fetchSurat = async () => {
+    setLoading(true);
+    const { data: dbData, error } = await supabase
+      .from("surat_keluar")
+      .select("*")
+      .order("tanggal", { ascending: false });
+
+    if (error) {
+      toast.error("Gagal mengambil data surat: " + error.message);
+    } else if (dbData) {
+      setData(dbData);
+    }
+    setLoading(false);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -81,11 +113,23 @@ export default function SuratKeluar() {
     return matchSearch && matchStatus;
   });
 
-  const handleApprove = (id: string) => {
+  const handleApprove = async (id: string) => {
+    const tgl = new Date().toISOString().split("T")[0];
+    
+    const { error } = await supabase
+      .from("surat_keluar")
+      .update({ status: "approved", ttd_kades: true, tanggal_approve: tgl })
+      .eq("surat_id", id);
+
+    if (error) {
+      toast.error("Gagal menyetujui surat: " + error.message);
+      return;
+    }
+
     setData(prev =>
       prev.map(s =>
         s.surat_id === id
-          ? { ...s, status: "approved", ttd_kades: true, tanggal_approve: new Date().toISOString().split("T")[0] }
+          ? { ...s, status: "approved", ttd_kades: true, tanggal_approve: tgl }
           : s
       )
     );
@@ -93,7 +137,17 @@ export default function SuratKeluar() {
     setShowDetail(null);
   };
 
-  const handleReject = (id: string) => {
+  const handleReject = async (id: string) => {
+    const { error } = await supabase
+      .from("surat_keluar")
+      .update({ status: "rejected" })
+      .eq("surat_id", id);
+
+    if (error) {
+      toast.error("Gagal menolak surat: " + error.message);
+      return;
+    }
+
     setData(prev =>
       prev.map(s => s.surat_id === id ? { ...s, status: "rejected" } : s)
     );
@@ -108,14 +162,13 @@ export default function SuratKeluar() {
     }
     
     setUploading(true);
-    await new Promise(resolve => setTimeout(resolve, 1200));
     
-    const newId = `SK${String(data.length + 1).padStart(3, "0")}`;
-    const fileUrl = URL.createObjectURL(selectedFile);
+    const newId = `SK${String(Date.now()).slice(-6)}`;
+    const noSurat = `${String(Math.floor(Math.random() * 100)).padStart(3, "0")}/SK/2026/${new Date().getMonth() + 1}`;
     
-    const newSurat: Surat = {
+    const newSurat: Omit<Surat, 'fileUrl'> = {
       surat_id: newId,
-      nomor_surat: `${String(data.length + 1).padStart(3, "0")}/SK/2026/${new Date().getMonth() + 1}`,
+      nomor_surat: noSurat,
       jenis_surat: form.jenis_surat,
       tanggal: form.tanggal,
       pembuat: user?.nama || "Admin",
@@ -123,15 +176,25 @@ export default function SuratKeluar() {
       status: "pending",
       ttd_kades: false,
       tanggal_approve: null,
-      fileUrl: fileUrl,
     };
     
-    setData(prev => [newSurat, ...prev]);
+    const { error } = await supabase.from("surat_keluar").insert([newSurat]);
+    
     setUploading(false);
+
+    if (error) {
+      toast.error("Gagal membuat draf: " + error.message);
+      return;
+    }
+    
+    // Asumsi fileUrl (local storage/blob) yang tidak disimpan db tapi dikelola untuk view preview:
+    const fileUrl = URL.createObjectURL(selectedFile);
+    setData(prev => [{ ...newSurat, fileUrl } as Surat, ...prev]);
+    
     setShowModal(false);
     setSelectedFile(null);
     setForm({ jenis_surat: "", tanggal: new Date().toISOString().split("T")[0] });
-    toast.success("Draft surat baru berhasil dibuat");
+    toast.success("Draft surat baru berhasil direkam ke Database");
   };
 
   const canApprove = user?.role === "KEPALA_DESA";
@@ -213,7 +276,22 @@ export default function SuratKeluar() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map(surat => (
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-12 text-gray-400">
+                    <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-emerald-500" />
+                    <p className="text-sm">Memuat data dari Supabase...</p>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-12 text-gray-400">
+                    <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">Tidak ada data surat keluar</p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map(surat => (
                 <tr key={surat.surat_id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -268,15 +346,7 @@ export default function SuratKeluar() {
                     </div>
                   </td>
                 </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-center py-12 text-gray-400">
-                    <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Tidak ada data surat keluar</p>
-                  </td>
-                </tr>
-              )}
+              )))}
             </tbody>
           </table>
         </div>
